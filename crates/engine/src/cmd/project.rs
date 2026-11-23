@@ -271,7 +271,7 @@ struct ProjectParams {
 
 /// The body, its tessellation as a boundary surface and projection target, and its size.
 pub(crate) struct Body {
-    input: super::hex::Input<'static>,
+    input: super::hex::Input,
     surface: BoundarySurface,
     target: Tessellation,
     lo: [f64; 3],

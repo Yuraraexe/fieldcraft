@@ -82,8 +82,8 @@ mod transition;
 
 /// A meshed cell; tet cells are meshed after the hex cells are in the model, so they can meet
 /// them through pyramids.
-enum Meshed<'a> {
-    Hex(Box<(Input<'a>, HexMesh)>),
+enum Meshed {
+    Hex(Box<(Input, HexMesh)>),
     Tet,
 }
 
@@ -235,7 +235,7 @@ fn cells(s: &mut Session, p: &Value) -> Result<Value> {
         fieldcraft_model::progress::check()?;
         let method = method_of(&shape.name);
         let input = || Ok::<_, EngineError>(Input { seeds: seeds.clone(), ..super::hex::shape_input(shape, Some(tolerance))? });
-        let hex = |m: HexMethod| -> Result<(Input<'static>, HexMesh)> {
+        let hex = |m: HexMethod| -> Result<(Input, HexMesh)> {
             let b = input()?;
             let mesh = hex_body(&hex_params, &b, m, quadratic, size, &sizing)?;
             Ok((b, mesh))

@@ -148,7 +148,7 @@ pub const SURFACE_CHECK: CommandSpec = CommandSpec {
 pub const TET_GENERATE: CommandSpec = CommandSpec {
     id: "mesh.tet.generate",
     label: "Generate Tet Mesh",
-    params: r#"{"body": "Body1" (default: every body of the open design) or "surface": 0 (an imported surface), "tolerance": 0.05 (chordal tolerance of the tessellation, a length; default 1e-3 of the body's bounding-box diagonal), "weld": 1e-9 (fraction of the bounding-box diagonal, 0 or 1e-15..=1e-3), "weld_distance": length (default the surface's own: twice the kernel linear tolerance for a design body, 0 for an imported surface; the larger of this and weld times the diagonal is used), "feature_angle": 45 (degrees), optional "size": length (target edge length; default a twentieth of the bounding-box diagonal), "order": "linear" | "quadratic" (tet4 or tet10; quadratic mid-edge nodes lie on the B-rep faces), "quality": true (false: the raw constrained Delaunay tetrahedralization), "quality_target": 40 (degrees: tetrahedra whose smallest dihedral-angle sine is at least sin of this are left alone by improvement, 5..=60), "curvature_angle": 22.5 (degrees per element along curved boundary, 0 for none, at most 90), "grading": 0.3 (largest size change per unit length, 0.05..=2; default the model's growth rate, mesh.size.growth), "max_passes": 20 (improvement passes, 0..=200), "max_points": 1000000 (1..=20000000), "max_steiner": 50000 (0..=10000000), "max_tets": 5000000 (1..=50000000) — the constrained Delaunay tetrahedralization of the welded boundary (every boundary triangle a union of tet faces), refined to the size field with its boundary vertices on the B-rep faces, smoothed and improved (Delaunay refinement, ODT smoothing, Klingner–Shewchuk improvement), with a quality report. Replaces the mesh of each body it meshes (its elements and the nodes only they use; other bodies' meshes stay; the reply's `replaced`, `stale_sets` and `results_cleared` say what went), adds the elements and their nodes (labels after the largest existing ones), tags the elements with the body and each boundary element face with its geometry face, and fails, changing nothing, if a surface is invalid or a mesh does not pass the validity gate. An open-edge failure suggests mesh.surface.check and an explicit weld_distance or weld only for a confirmed small seam: keep it below features to preserve; the default does not cover every boolean retry displacement, and welding does not repair inconsistent face orientation. Edge seeds (mesh.seed.edge) divide their edges at the seeded nodes, and the size field grades from them; size controls (mesh.size.set) refine it, graded at the model's growth rate (mesh.size.growth) unless `grading` is given. Reports the totals and, under `bodies`, each body's counts, size, quality report (its `unsnapped` counts the boundary nodes left off their exact face or curve, where moving one would spoil an element, and `snap_gap` is the furthest of them) and `seeds` (per seeded edge, the mesh edges along it)"#,
+    params: r#"{"body": "Body1" (default: every body of the open design; an imported surface, named as a body, is refused: triangles without a B-rep are never volume-meshed), "tolerance": 0.05 (chordal tolerance of the tessellation, a length; default 1e-3 of the body's bounding-box diagonal), "weld": 1e-9 (fraction of the bounding-box diagonal, 0 or 1e-15..=1e-3), "weld_distance": length (default the surface's own: twice the kernel linear tolerance for a design body; the larger of this and weld times the diagonal is used), "feature_angle": 45 (degrees), optional "size": length (target edge length; default a twentieth of the bounding-box diagonal), "order": "linear" | "quadratic" (tet4 or tet10; quadratic mid-edge nodes lie on the B-rep faces), "quality": true (false: the raw constrained Delaunay tetrahedralization), "quality_target": 40 (degrees: tetrahedra whose smallest dihedral-angle sine is at least sin of this are left alone by improvement, 5..=60), "curvature_angle": 22.5 (degrees per element along curved boundary, 0 for none, at most 90), "grading": 0.3 (largest size change per unit length, 0.05..=2; default the model's growth rate, mesh.size.growth), "max_passes": 20 (improvement passes, 0..=200), "max_points": 1000000 (1..=20000000), "max_steiner": 50000 (0..=10000000), "max_tets": 5000000 (1..=50000000) — the constrained Delaunay tetrahedralization of the welded boundary (every boundary triangle a union of tet faces), refined to the size field with its boundary vertices on the B-rep faces, smoothed and improved (Delaunay refinement, ODT smoothing, Klingner–Shewchuk improvement), with a quality report. Replaces the mesh of each body it meshes (its elements and the nodes only they use; other bodies' meshes stay; the reply's `replaced`, `stale_sets` and `results_cleared` say what went), adds the elements and their nodes (labels after the largest existing ones), tags the elements with the body and each boundary element face with its geometry face, and fails, changing nothing, if a surface is invalid or a mesh does not pass the validity gate. An open-edge failure suggests mesh.surface.check and an explicit weld_distance or weld only for a confirmed small seam: keep it below features to preserve; the default does not cover every boolean retry displacement, and welding does not repair inconsistent face orientation. Edge seeds (mesh.seed.edge) divide their edges at the seeded nodes, and the size field grades from them; size controls (mesh.size.set) refine it, graded at the model's growth rate (mesh.size.growth) unless `grading` is given. Reports the totals and, under `bodies`, each body's counts, size, quality report (its `unsnapped` counts the boundary nodes left off their exact face or curve, where moving one would spoil an element, and `snap_gap` is the furthest of them) and `seeds` (per seeded edge, the mesh edges along it)"#,
     form: Some(super::forms::TET),
     kind: CommandKind::Model,
     requires: &[Requirement::Geometry],
@@ -297,8 +297,7 @@ impl BodyTets {
     }
 }
 
-/// Mesh one body or imported surface; the model is not touched. With `several` bodies an error
-/// names the body.
+/// Mesh one body; the model is not touched. With `several` bodies an error names the body.
 pub(super) fn mesh_body(
     design: Option<&fieldcraft_geometry::Design>,
     p: &Value,
@@ -309,11 +308,8 @@ pub(super) fn mesh_body(
     several: bool,
 ) -> Result<BodyTets> {
     let mesh = || -> Result<BodyTets> {
-        // The exact faces of a design body; an imported surface keeps to its triangles.
-        let analytic = match p.get("surface") {
-            None => design.and_then(|d| d.body(&input.name)).map(analytic_surfaces).unwrap_or_default(),
-            Some(_) => Vec::new(),
-        };
+        // The exact faces of the body's B-rep.
+        let analytic = design.and_then(|d| d.body(&input.name)).map(analytic_surfaces).unwrap_or_default();
         fieldcraft_model::progress::stage(&format!("{}: boundary", input.name), None, "");
         // The mesh depends on the geometry only, not on the order the kernel lists it in.
         let soup = CanonicalSoup::new(&input.mesh.positions, &input.mesh.triangles, &input.mesh.tri_face)?;
@@ -1676,8 +1672,10 @@ mod tests {
         assert!(on_bore > 20, "{on_bore}");
     }
 
+    /// An imported triangle surface is never volume-meshed (#1049): every volume mesher refuses it
+    /// with the file it came from and the way out, and changes nothing. Checking still accepts it.
     #[test]
-    fn tet_generate_on_an_imported_surface_and_an_open_one() {
+    fn volume_meshing_refuses_an_imported_surface() {
         use std::sync::Arc;
 
         use fieldcraft_geometry::SurfaceMesh;
@@ -1685,24 +1683,18 @@ mod tests {
 
         let p = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let t = vec![[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]];
-        let tet =
-            SurfaceMesh { positions: p.clone(), triangles: t.clone(), tri_face: vec![0, 1, 1, 1], weld_distance: 0.0, ..SurfaceMesh::default() };
-        let open = SurfaceMesh { positions: p, triangles: t[..3].to_vec(), tri_face: vec![0, 1, 1], weld_distance: 0.0, ..SurfaceMesh::default() };
+        let tet = SurfaceMesh { positions: p, triangles: t, tri_face: vec![0, 1, 1, 1], weld_distance: 0.0, ..SurfaceMesh::default() };
         let mut s = Session::default();
-        for mesh in [tet, open] {
-            s.surfaces.push(Arc::new(TaggedSurface { name: "Tet".into(), file: String::new(), mesh, faces: 2, original: None }));
+        s.surfaces.push(Arc::new(TaggedSurface { name: "Tray".into(), file: "tray.stl".into(), mesh: tet, faces: 2, original: None }));
+        // An imported surface is named like a body, and as one it is refused, naming its file.
+        for cmd in ["mesh.tet.generate", "mesh.hex.generate", "mesh.hex.octree"] {
+            let error = s.execute(cmd, &json!({"body": "Tray"})).unwrap_err().to_string();
+            assert!(error.contains("`tray.stl` is triangles without a B-rep"), "{cmd}: {error}");
+            assert!(error.contains("STEP, IGES, .sc"), "{cmd}: {error}");
+            assert!(s.model.elements().is_empty() && s.journal.is_empty(), "{cmd} changes nothing");
         }
-        let r = s.execute("mesh.tet.generate", &json!({"surface": 0, "quality": false})).unwrap();
-        assert_eq!((r["elements"].clone(), r["nodes"].clone(), r["boundary_faces"].clone()), (json!(1), json!(4), json!(4)));
-        let element = s.model.element(1).unwrap();
-        assert_eq!(element.nodes.len(), 4);
-        // Refined to a size, the flat-faced tetrahedron keeps its volume exactly.
-        let r = s.execute("mesh.tet.generate", &json!({"surface": 0, "size": 0.3})).unwrap();
-        assert!(r["elements"].as_u64().unwrap() > 1, "{r}");
-        assert!((r["volume"].as_f64().unwrap() - 1.0 / 6.0).abs() < 1e-12, "{r}");
-        let total = s.model.elements().len();
-        assert!(s.execute("mesh.tet.generate", &json!({"surface": 1})).is_err(), "an open surface bounds no volume");
-        assert_eq!(s.model.elements().len(), total);
+        let check = s.execute("mesh.surface.check", &json!({"surface": 0})).unwrap();
+        assert_eq!(check["valid"], json!(true), "{check}");
     }
 
     /// A seam larger than the CAD weld tolerance is refused with an actionable, unit-correct
@@ -1713,6 +1705,9 @@ mod tests {
         use std::sync::Arc;
 
         use fieldcraft_geometry::tagged_mesh::TaggedSurface;
+        use fieldcraft_mesh::cdt::CdtOptions;
+
+        use super::super::hex::Input;
 
         let mut seam = fieldcraft_geometry::stitch::test_cube(1e-5, false);
         // Use the actual CAD default, rather than making the test depend on a guessed tolerance.
@@ -1725,52 +1720,46 @@ mod tests {
         for mesh in &originals {
             s.surfaces.push(Arc::new(TaggedSurface { name: "Cube".into(), file: String::new(), mesh: mesh.clone(), faces: 6, original: None }));
         }
-        s.execute("model.units", &json!({"system": "in-lbf-s-psi"})).unwrap();
-        let params = json!({"surface": 0, "quality": false});
-        let journal = s.journal.len();
-        let error = s.execute("mesh.tet.generate", &params).unwrap_err().to_string();
-        for text in [
-            "open edge",
-            ") in (only triangle",
-            "mesh.surface.check",
-            "confirmed small seam",
-            "weld_distance",
-            "fraction of the diagonal",
-            "orientation",
-        ] {
+        // The boundary is meshed directly: a unit cube in millimetres, whose diagonal is √3.
+        let body = |boundary: &fieldcraft_geometry::SurfaceMesh, option: serde_json::Value| -> crate::Result<super::BodyTets> {
+            let mut params = json!({"quality": false});
+            params.as_object_mut().unwrap().extend(option.as_object().unwrap().clone());
+            let (options, quality) = super::quality_options(&params, 5_000_000)?;
+            let input = Input {
+                name: "Cube".into(),
+                mesh: boundary.clone(),
+                surfaces: Vec::new(),
+                face_names: (0..6).map(|f| f.to_string()).collect(),
+                diagonal: 3f64.sqrt(),
+                seeds: Vec::new(),
+                pieces: Vec::new(),
+            };
+            super::mesh_body(None, &params, input, &CdtOptions::default(), &options, quality, false)
+        };
+        let error = body(&originals[0], json!({})).err().unwrap().to_string();
+        for text in
+            ["open edge", "(only triangle", "mesh.surface.check", "confirmed small seam", "weld_distance", "fraction of the diagonal", "orientation"]
+        {
             assert!(error.contains(text), "{text}: {error}");
         }
-        assert_eq!(s.journal.len(), journal);
-        assert!(s.model.nodes().is_empty() && s.model.elements().is_empty());
         let check = s.execute("mesh.surface.check", &json!({"surface": 0})).unwrap();
         assert_eq!(check["valid"], false);
         assert!(check["defects"]["listed"].as_array().unwrap().iter().all(|d| d["kind"] == "open_edge"));
-        for option in [json!({"weld_distance": "0.00002 mm"}), json!({"weld": 2e-5})] {
-            let mut params = params.clone();
-            params.as_object_mut().unwrap().extend(option.as_object().unwrap().clone());
-            let reply = s.execute("mesh.tet.generate", &params).unwrap();
-            assert!(reply["elements"].as_u64().unwrap() > 0, "{reply}");
-            // A unit-mm cube, expressed in cubic inches; welding may move its top by the seam.
-            assert!((reply["volume"].as_f64().unwrap() * 25.4_f64.powi(3) - 1.0).abs() < 2e-5, "{reply}");
+        for option in [json!({"weld_distance": 2e-5}), json!({"weld": 2e-5})] {
+            let reply = body(&originals[0], option).ok().unwrap();
+            assert!(!reply.mesh.elements.is_empty());
+            // A unit cube; welding may move its top by the seam.
+            assert!((reply.mesh.report.volume - 1.0).abs() < 2e-5, "{}", reply.mesh.report.volume);
         }
-        let nodes = s.model.nodes().clone();
-        let elements = s.model.elements().clone();
-        let journal = s.journal.len();
-        for option in [json!({"weld_distance": "0.00002 mm"}), json!({"weld": 2e-5})] {
-            let mut params = json!({"surface": 1});
-            params.as_object_mut().unwrap().extend(option.as_object().unwrap().clone());
-            let error = s.execute("mesh.tet.generate", &params).unwrap_err().to_string();
+        for option in [json!({"weld_distance": 2e-5}), json!({"weld": 2e-5})] {
+            let error = body(&originals[1], option).err().unwrap().to_string();
             assert!(error.contains("oriented inconsistently"), "{error}");
             assert!(!error.contains("confirmed small seam"), "{error}");
-            assert_eq!(s.model.nodes(), &nodes);
-            assert_eq!(s.model.elements(), &elements);
-            assert_eq!(s.journal.len(), journal);
         }
         for (surface, original) in s.surfaces.iter().zip(&originals) {
             assert_eq!(&surface.mesh, original);
         }
     }
-
     #[test]
     fn planar_meshes_a_polygon_that_solves_as_a_2d_model() {
         let mut s = Session::default();

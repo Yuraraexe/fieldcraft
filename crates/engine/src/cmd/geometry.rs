@@ -24,7 +24,7 @@ const SAME_AXIS: f64 = 1e-6; // unit-factors: relative to the body's size
 pub const OPEN: CommandSpec = CommandSpec {
     id: "geometry.open",
     label: "Open Design",
-    params: r#"{"path": "part.solidcraft", "model"?: "keep"} — opens a SolidCraft design (.sc, .solidcraft, .solvecraft) or imports a CAD file through SolidCraft as a base feature (STEP .step/.stp, IGES .iges/.igs, and FreeCAD .fcstd and Rhino .3dm in native builds: what SolidCraft's format table reads as B-rep) and makes its placed bodies the geometry. `model`: "keep" (default) keeps the mesh and every definition, so opening the same design again after an edit picks up the change and sets follow their persistent face names; "new" starts a new model with the design (no mesh, sets, materials, sections, BCs, loads or steps; the unit system stays; the model is untitled until saved, and undo restores the previous file). The reply's `related` is false when the model (before the open) refers to bodies (mesh tags, set geometry) and the design has none of them, or refers to none but has a mesh or definitions and its design (if any) shares no body with this one, and `stale` lists what no longer resolves: `mesh_bodies` (bodies the mesh is tagged with that the design lacks) `sets` (sets naming a body or face it lacks) and `seeds` (seeds on edges or faces it lacks), and `references` every definition naming a face, edge or vertex of a body the design has but not that entity ({owner, reference, why}). Such a name is first looked for again as file.open does (`renamed`, `mismatched`). `errors` lists the features that failed to rebuild with the `bodies` each may change, and `warnings` says so in one line each. One undo step"#,
+    params: r#"{"path": "part.solidcraft", "model"?: "keep"} — opens a SolidCraft design (.sc, .solidcraft, .solvecraft) or imports a CAD file through SolidCraft as a base feature (STEP .step/.stp, IGES .iges/.igs, and FreeCAD .fcstd and Rhino .3dm in native builds: what SolidCraft's format table reads as B-rep) and makes its placed bodies the geometry; a triangle file is refused (geometry.import.mesh imports it as surfaces, never volume-meshed). `model`: "keep" (default) keeps the mesh and every definition, so opening the same design again after an edit picks up the change and sets follow their persistent face names; "new" starts a new model with the design (no mesh, sets, materials, sections, BCs, loads or steps; the unit system stays; the model is untitled until saved, and undo restores the previous file). The reply's `related` is false when the model (before the open) refers to bodies (mesh tags, set geometry) and the design has none of them, or refers to none but has a mesh or definitions and its design (if any) shares no body with this one, and `stale` lists what no longer resolves: `mesh_bodies` (bodies the mesh is tagged with that the design lacks) `sets` (sets naming a body or face it lacks) and `seeds` (seeds on edges or faces it lacks), and `references` every definition naming a face, edge or vertex of a body the design has but not that entity ({owner, reference, why}). Such a name is first looked for again as file.open does (`renamed`, `mismatched`). `errors` lists the features that failed to rebuild with the `bodies` each may change, and `warnings` says so in one line each. One undo step"#,
     form: Some(super::forms::OPEN_DESIGN),
     kind: CommandKind::Model,
     requires: &[],
@@ -84,7 +84,7 @@ pub const TESSELLATE: CommandSpec = CommandSpec {
 pub const IMPORT_MESH: CommandSpec = CommandSpec {
     id: "geometry.import.mesh",
     label: "Import Triangle Mesh",
-    params: r#"{"path": "part.stl"} — adds a triangle file as surfaces, for display, reference and fluid obstacles: each build item of a 3MF package, whose triangles keep their B-rep face tags (docs/formats/tagged-mesh.md), or each mesh of an STL, OBJ, PLY or glTF file (one face each; STL, OBJ and PLY read in millimetres)"#,
+    params: r#"{"path": "part.stl"} — adds a triangle file as surfaces, for display, reference and fluid obstacles (they are never volume-meshed: mesh the CAD file instead): each build item of a 3MF package, whose triangles keep their B-rep face tags (docs/formats/tagged-mesh.md), or each mesh of an STL, OBJ, PLY or glTF file (one face each; STL, OBJ and PLY read in millimetres)"#,
     form: Some(super::forms::IMPORT_MESH),
     kind: CommandKind::Model,
     requires: &[],
@@ -902,7 +902,8 @@ pub(crate) mod tests {
     }
 
     /// STL, OBJ and PLY import as one-face surfaces through SolidCraft's readers and reopen with
-    /// the model; truncated and garbage files are errors that change nothing.
+    /// the model; truncated and garbage files are errors that change nothing; a triangle file is
+    /// never opened as a design.
     #[test]
     fn import_reads_stl_obj_ply_and_hostile_files_change_nothing() {
         let dir = std::env::temp_dir().join(format!("fieldcraft-import-triangles-{}", std::process::id()));
@@ -960,6 +961,8 @@ pub(crate) mod tests {
         reopened.execute("file.open", &json!({"path": model})).unwrap();
         let of = |s: &Session| s.surfaces.iter().map(|x| (x.name.clone(), x.file.clone(), x.mesh.clone())).collect::<Vec<_>>();
         assert_eq!(of(&reopened), of(&s));
+        let e = s.execute("geometry.open", &json!({"path": path("tet.stl")})).unwrap_err().to_string();
+        assert!(e.contains("`tet.stl` is triangles without a B-rep"), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

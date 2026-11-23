@@ -1,9 +1,25 @@
 # Face-tagged meshes (3MF with B-rep face tags)
 
-Besides opening a SolidCraft design, STEP or IGES file, geometry can enter FieldCraft as a triangulated boundary
+Besides opening a SolidCraft design or a CAD file, geometry can enter FieldCraft as a triangulated boundary
 surface written by another program, with each triangle tagged by the B-rep face it lies on.
 FieldCraft reads it into a `SurfaceMesh` (`fieldcraft_geometry::tagged_mesh`, command
 `geometry.import.mesh`) without involving the kernel.
+
+An imported surface is triangles without a B-rep: it is shown, used for reference and as a fluid
+obstacle (its face tags name the faces whose wall forces and heat are reported), and
+`mesh.surface.check` checks it, but it is never volume-meshed. `mesh.tet.generate`,
+`mesh.hex.generate` and `mesh.hex.octree` refuse it, tags or not, and name the way out: open the CAD
+file it came from (#1049). `geometry.stitch` closes its gaps under a tolerance, so that it bounds a
+solid as an obstacle needs.
+
+## Other triangle files
+
+STL, OBJ, PLY and glTF files import through the same command, read by SolidCraft's mesh readers
+(`fieldcraft_geometry::triangles`); which extensions these are comes from SolidCraft's format table
+(`fieldcraft_geometry::formats`). Each mesh in the file becomes one surface with one face. STL, OBJ
+and PLY state no unit and are read in millimetres, as SolidCraft reads them. SolidCraft's readers
+cap the file size and the vertex and triangle counts, the result is held to the limits below, and
+the call runs under SolidCraft's panic guard, so a damaged file is an error.
 
 ## The format is SolidCraft's
 
