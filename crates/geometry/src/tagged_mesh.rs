@@ -43,6 +43,8 @@ pub const FACE_TAGS_NS: &str = "https://github.com/bherbruck/solidcraft/formats/
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TaggedSurface {
     pub name: String,
+    /// The name of the file it was read from (`part.stl`), for messages; empty when unknown.
+    pub file: String,
     pub mesh: SurfaceMesh,
     /// Number of faces: `ft:faces` when given, else the largest tag + 1 (1 when untagged).
     pub faces: u32,
@@ -350,6 +352,7 @@ fn surface(mut o: Object, k: usize, id: u32, xf: &Xf, unit: f64) -> Result<Tagge
     let name = if o.name.is_empty() { format!("Mesh{}", k + 1) } else { o.name };
     Ok(TaggedSurface {
         name,
+        file: String::new(),
         mesh: SurfaceMesh { positions: o.positions, triangles: o.triangles, tri_face: o.tags, weld_distance: 0.0, ..SurfaceMesh::default() },
         faces,
         original: None,
@@ -498,7 +501,7 @@ mod tests {
         assert_eq!(got.len(), 2);
         // The file carries no weld distance and no B-rep edges.
         let mesh = SurfaceMesh { weld_distance: 0.0, edges: Vec::new(), edge_faces: Vec::new(), ..mesh };
-        assert_eq!(got[0], TaggedSurface { name: "Block".into(), mesh: mesh.clone(), faces: 6, original: None });
+        assert_eq!(got[0], TaggedSurface { name: "Block".into(), file: String::new(), mesh: mesh.clone(), faces: 6, original: None });
         assert_eq!(got[1].name, "Again");
         assert_eq!(got[1].mesh, mesh);
     }

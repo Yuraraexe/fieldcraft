@@ -83,8 +83,8 @@ pub const TESSELLATE: CommandSpec = CommandSpec {
 
 pub const IMPORT_MESH: CommandSpec = CommandSpec {
     id: "geometry.import.mesh",
-    label: "Import Tagged Mesh",
-    params: r#"{"path": "part.3mf"} — adds each build item of a 3MF package as a surface; triangles keep their B-rep face tags (docs/formats/tagged-mesh.md)"#,
+    label: "Import Triangle Mesh",
+    params: r#"{"path": "part.stl"} — adds a triangle file as surfaces, for display, reference and fluid obstacles: each build item of a 3MF package, whose triangles keep their B-rep face tags (docs/formats/tagged-mesh.md), or each mesh of an STL, OBJ, PLY or glTF file (one face each; STL, OBJ and PLY read in millimetres)"#,
     form: Some(super::forms::IMPORT_MESH),
     kind: CommandKind::Model,
     requires: &[],
@@ -572,7 +572,7 @@ fn import_mesh(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let bytes = super::file::read_file(&path, tagged_mesh::MAX_FILE_BYTES as u64)?;
     let source = SourceFile::of(super::file::absolute(&path), &bytes)?;
-    let surfaces = tagged_mesh::read_3mf(&bytes)?;
+    let surfaces = fieldcraft_geometry::triangles::read_surfaces(&path, &bytes)?;
     let first = s.surfaces.len();
     let added: Vec<Value> = surfaces
         .iter()
@@ -898,6 +898,68 @@ pub(crate) mod tests {
         }
         assert_eq!(s.surfaces.len(), 1);
         assert_eq!(s.journal.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// STL, OBJ and PLY import as one-face surfaces through SolidCraft's readers and reopen with
+    /// the model; truncated and garbage files are errors that change nothing.
+    #[test]
+    fn import_reads_stl_obj_ply_and_hostile_files_change_nothing() {
+        let dir = std::env::temp_dir().join(format!("fieldcraft-import-triangles-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let t = [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]];
+        let mut stl = String::from("solid tet\n");
+        for tri in t {
+            stl.push_str("facet normal 0 0 0\nouter loop\n");
+            for v in tri {
+                let q: [f64; 3] = p[v];
+                stl.push_str(&format!("vertex {} {} {}\n", q[0], q[1], q[2]));
+            }
+            stl.push_str("endloop\nendfacet\n");
+        }
+        stl.push_str("endsolid tet\n");
+        let vertices: String = p.iter().map(|q| format!("{} {} {}\n", q[0], q[1], q[2])).collect();
+        let obj = format!(
+            "o Tet\n{}{}",
+            vertices.lines().map(|l| format!("v {l}\n")).collect::<String>(),
+            t.iter().map(|f| format!("f {} {} {}\n", f[0] + 1, f[1] + 1, f[2] + 1)).collect::<String>()
+        );
+        let ply = format!(
+            "ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nelement face 4\nproperty list uchar int vertex_indices\nend_header\n{vertices}{}",
+            t.iter().map(|f| format!("3 {} {} {}\n", f[0], f[1], f[2])).collect::<String>()
+        );
+        let random: Vec<u8> = (0..4096u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8).collect();
+        let files: [(&str, Vec<u8>); 6] = [
+            ("tet.stl", stl.into_bytes()),
+            ("tet.obj", obj.into_bytes()),
+            ("tet.ply", ply.into_bytes()),
+            ("junk.obj", random),
+            ("cut.ply", b"ply\nformat ascii 1.0\nelement vertex 3\n".to_vec()),
+            ("empty.stl", Vec::new()),
+        ];
+        let path = |name: &str| dir.join(name).to_str().unwrap().to_string();
+        for (name, bytes) in &files {
+            std::fs::write(dir.join(name), bytes).unwrap();
+        }
+        let mut s = Session::default();
+        for name in ["tet.stl", "tet.obj", "tet.ply"] {
+            let r = s.execute("geometry.import.mesh", &json!({"path": path(name)})).unwrap();
+            assert_eq!((r["surfaces"][0]["triangles"].clone(), r["surfaces"][0]["faces"].clone()), (json!(4), json!(1)), "{name}: {r}");
+        }
+        assert_eq!(s.surfaces.iter().map(|x| x.file.as_str()).collect::<Vec<_>>(), ["tet.stl", "tet.obj", "tet.ply"]);
+        assert_eq!(s.surfaces[1].name, "Tet");
+        assert_eq!(s.journal.len(), 3);
+        for name in ["junk.obj", "cut.ply", "empty.stl"] {
+            assert!(s.execute("geometry.import.mesh", &json!({"path": path(name)})).is_err(), "{name}");
+        }
+        assert_eq!((s.surfaces.len(), s.journal.len()), (3, 3));
+        let model = path("m.fieldcraft");
+        s.execute("file.save", &json!({"path": model})).unwrap();
+        let mut reopened = Session::default();
+        reopened.execute("file.open", &json!({"path": model})).unwrap();
+        let of = |s: &Session| s.surfaces.iter().map(|x| (x.name.clone(), x.file.clone(), x.mesh.clone())).collect::<Vec<_>>();
+        assert_eq!(of(&reopened), of(&s));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

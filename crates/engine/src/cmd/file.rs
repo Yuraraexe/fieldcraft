@@ -11,6 +11,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use fieldcraft_geometry::tagged_mesh;
+use fieldcraft_geometry::triangles::read_surfaces;
 use fieldcraft_geometry::{Design, design_file_limit, open_design, open_geometry};
 use fieldcraft_io::{Geometry, ModelFile, SourceFile};
 use serde_json::{Value, json};
@@ -381,8 +382,16 @@ impl Session {
         }
         let mut surfaces = Vec::new();
         for stored in &file.geometry.meshes {
-            let (opened, source) =
-                reopen("mesh", stored, base, roots, tagged_mesh::MAX_FILE_BYTES as u64, tagged_mesh::read_3mf, copy(stored), &mut warnings);
+            let (opened, source) = reopen(
+                "mesh",
+                stored,
+                base,
+                roots,
+                tagged_mesh::MAX_FILE_BYTES as u64,
+                |b| read_surfaces(stored.path(), b),
+                copy(stored),
+                &mut warnings,
+            );
             surfaces.extend(opened.into_iter().flatten().map(Arc::new));
             sources.meshes.push(source.without_embedded());
         }

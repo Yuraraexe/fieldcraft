@@ -2632,7 +2632,8 @@ pub const GEOMETRY_CHECK: &[Field] = &[
     flag("mark", "Mark findings").help("Mark what is found in the viewport until the design changes.").def("true"),
 ];
 pub const TESSELLATE: &[Field] = &[reference("body", "Body", C::Body).help("The body to tessellate.").req(), TOLERANCE];
-pub const IMPORT_MESH: &[Field] = &[path("path", "3MF file", false).help("A 3MF surface mesh with named faces.").req()];
+pub const IMPORT_MESH: &[Field] =
+    &[path("path", "Triangle file", false).help("A 3MF, STL, OBJ, PLY or glTF surface mesh: shown, and usable as a fluid obstacle.").req()];
 pub const IMPORT_ORPHAN: &[Field] = &[
     path("path", "MSH file", false)
         .help("ASCII Gmsh MSH 4.1. Unitless coordinates use the current length unit. Replaces the mesh; remove existing mesh selections first, or import into a new model.")
